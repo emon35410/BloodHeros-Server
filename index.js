@@ -3,7 +3,9 @@ const cors = require('cors')
 const app = express()
 const port = process.env.PORT || 3000
 require('dotenv').config()
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb'); // Added ObjectId
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_KEY);
+
 
 // middleware
 app.use(express.json());
@@ -43,22 +45,33 @@ async function run() {
 
         // Donor Request API
 
-        // GET - Get all or filtered donor requests
         app.get('/donorRequest', async (req, res) => {
             try {
                 const query = {};
-                const { email } = req.query;
+                const { email, limit } = req.query;
+
                 if (email) {
                     query.requesterEmail = email;
                 }
-                const cursor = donorRequestCollection.find(query).sort({ _id: -1 });
+
+                let cursor = donorRequestCollection
+                    .find(query)
+                    .sort({ _id: -1 });
+
+                // 🔥 apply limit ONLY if provided
+                if (limit) {
+                    cursor = cursor.limit(parseInt(limit));
+                }
+
                 const result = await cursor.toArray();
-                res.send(result)
+                res.send(result);
+
             } catch (error) {
                 console.error('Get requests error:', error);
                 res.status(500).send({ message: 'Failed to fetch requests' });
             }
-        })
+        });
+
 
         // POST - Create new donor request
         app.post('/donorRequest', async (req, res) => {
@@ -140,6 +153,38 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch request' });
             }
         })
+
+        // Donation Payment API's
+
+        app.post('/create-checkout-session', async (req, res) => {
+            const { amount, email, name } = req.body;
+
+            const session = await stripe.checkout.sessions.create({
+                payment_method_types: ['card'],
+                line_items: [
+                    {
+                        price_data: {
+                            currency: 'usd',
+                            unit_amount: amount * 100,
+                            product_data: {
+                                name: 'BloodHeros Donation',
+                            },
+                        },
+                        quantity: 1,
+                    },
+                ],
+                customer_email: email,
+                metadata: {
+                    donorName: name,
+                },
+                mode: 'payment',
+                success_url: `${process.env.DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${process.env.DOMAIN}/payment-canceled`,
+            });
+
+            res.send({ url: session.url });
+        });
+
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
