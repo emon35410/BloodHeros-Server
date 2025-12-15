@@ -5,6 +5,23 @@ const port = process.env.PORT || 3000
 require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
+const bodyParser = require('body-parser');
+
+const crypto = require('crypto');
+
+function generateTrackingId(prefix = 'BH') {
+    const date = new Date()
+        .toISOString()
+        .slice(0, 10)
+        .replace(/-/g, ''); // YYYYMMDD
+
+    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
+    // 3 bytes → 6 hex chars
+
+    return `${prefix}-${date}-${randomHex}`;
+}
+
+
 
 
 // middleware
@@ -29,6 +46,10 @@ async function run() {
         const db = client.db('bloodheros_db');
         const donorsCollection = db.collection('donors');
         const donorRequestCollection = db.collection('donorRequest');
+        const donationsCollection = db.collection('donations');
+        
+
+
 
         // Donors API
         app.get('/donors', async (req, res) => {
@@ -156,34 +177,96 @@ async function run() {
 
         // Donation Payment API's
 
-        app.post('/create-checkout-session', async (req, res) => {
-            const { amount, email, name } = req.body;
-
+        // 1. Create checkout session
+        app.post("/create-checkout-session", async (req, res) => {
+            const { name, email, amount } = req.body;
             const session = await stripe.checkout.sessions.create({
-                payment_method_types: ['card'],
+                payment_method_types: ["card"],
                 line_items: [
                     {
                         price_data: {
-                            currency: 'usd',
-                            unit_amount: amount * 100,
+                            currency: "usd",
                             product_data: {
-                                name: 'BloodHeros Donation',
+                                name: "BloodHeros Donation",
                             },
+                            unit_amount: parseInt(amount) * 100,
                         },
                         quantity: 1,
                     },
                 ],
                 customer_email: email,
-                metadata: {
-                    donorName: name,
-                },
-                mode: 'payment',
+                mode: "payment",
                 success_url: `${process.env.DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-                cancel_url: `${process.env.DOMAIN}/payment-canceled`,
+
+                cancel_url: `${process.env.DOMAIN}/supportus`,
             });
 
             res.send({ url: session.url });
         });
+
+
+        app.patch("/payment-success", async (req, res) => {
+            const sessionID = req.query.session_id;
+
+            try {
+
+                const session = await stripe.checkout.sessions.retrieve(sessionID);
+                const transactionId = session.payment_intent;
+                const query = { transactionId: transactionId }
+                const paymentexist = await donationsCollection.findOne(query)
+
+                if(paymentexist){
+                    return res.send({message:"Already Exist",transactionId})
+                }
+
+                const donation = {
+                    name: session.customer_details?.name || "Anonymous",
+                    email: session.customer_email,
+                    amount: session.amount_total / 100,
+                    payment_status: session.payment_status,
+                    trakingID: generateTrackingId(),
+                    transactionId: session.payment_intent,
+                    session_id: session.id,
+                    created_at: new Date(),
+                };
+
+                const result = await donationsCollection.insertOne(donation);
+
+                res.send({
+                    success: true,
+                    message: "Donation saved successfully",
+                    donation,
+                });
+
+            } catch (error) {
+
+                if (error.code === 11000) {
+                    return res.send({
+                        success: true,
+                        message: "Duplicate prevented by DB",
+                    });
+                }
+
+                console.error("Payment success error:", error);
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to save donation",
+                });
+            }
+        });
+
+
+
+
+        app.get("/donations", async (req, res) => {
+            const donations = await donationsCollection
+                .find()
+                .sort({ created_at: -1 })
+                .toArray();
+
+            res.send(donations);
+        });
+
 
 
         // Send a ping to confirm a successful connection
