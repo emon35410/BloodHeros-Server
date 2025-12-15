@@ -39,17 +39,17 @@ const verifyFBToken = async (req, res, next) => {
         return res.status(401).send({ message: "Unauthorizes Access" })
     }
 
-    try{
+    try {
         const idToken = token.split(' ')[1];
         const decoded = await admin.auth().verifyIdToken(idToken);
-        console.log("Decoded in the token",decoded)
+        console.log("Decoded in the token", decoded)
         req.decoded_email = decoded.email;
-         next();
+        next();
     }
-    catch(error){
-        return res.status(401).send({message:"Unauthorized Access"})
+    catch (error) {
+        return res.status(401).send({ message: "Unauthorized Access" })
     }
-   
+
 }
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@learndb.jowukka.mongodb.net/?appName=LearnDB`;
 
@@ -64,7 +64,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
+
         await client.connect();
         const db = client.db('bloodheros_db');
         const donorsCollection = db.collection('donors');
@@ -75,17 +75,41 @@ async function run() {
 
 
         // Donors API
+        app.post('/donors', async (req, res) => {
+            try {
+                const donor = req.body;
+
+                if (!donor.email) {
+                    return res.status(400).send({ message: 'Email is required' });
+                }
+
+                const existingDonor = await donorsCollection.findOne({ email: donor.email });
+                if (existingDonor) {
+                    return res.status(409).send({ message: 'Donor already exists' });
+                }
+
+                donor.role = 'donor';
+                donor.status = 'active';
+                donor.created_at = new Date();
+
+                const result = await donorsCollection.insertOne(donor);
+                res.send(result);
+
+            } catch (error) {
+                console.error('Create donor error:', error);
+                res.status(500).send({ message: 'Failed to create donor' });
+            }
+        });
+
+
+
         app.get('/donors', async (req, res) => {
             const cursor = donorsCollection.find();
             const result = await cursor.toArray();
             res.send(result)
         })
 
-        app.post('/donors', async (req, res) => {
-            const newDonor = req.body;
-            const result = await donorsCollection.insertOne(newDonor);
-            res.send(result)
-        })
+
 
         // Donor Request API
 
@@ -287,10 +311,10 @@ async function run() {
             const email = req.query.email;
             const query = {}
 
-            if(email){
+            if (email) {
                 query.email = email;
-                if(email!==req.decoded_email)
-                    return res.status(403).send({message:"Forbidden Access"})
+                if (email !== req.decoded_email)
+                    return res.status(403).send({ message: "Forbidden Access" })
             }
             const donations = await donationsCollection
                 .find(query)
