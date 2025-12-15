@@ -5,7 +5,13 @@ const port = process.env.PORT || 3000
 require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
-const bodyParser = require('body-parser');
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./blood-heros-firebase-adminsdk.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
 
 const crypto = require('crypto');
 
@@ -27,7 +33,24 @@ function generateTrackingId(prefix = 'BH') {
 // middleware
 app.use(express.json());
 app.use(cors());
+const verifyFBToken = async (req, res, next) => {
+    const token = req.headers.authorization;
+    if (!token) {
+        return res.status(401).send({ message: "Unauthorizes Access" })
+    }
 
+    try{
+        const idToken = token.split(' ')[1];
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        console.log("Decoded in the token",decoded)
+        req.decoded_email = decoded.email;
+         next();
+    }
+    catch(error){
+        return res.status(401).send({message:"Unauthorized Access"})
+    }
+   
+}
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@learndb.jowukka.mongodb.net/?appName=LearnDB`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -47,7 +70,7 @@ async function run() {
         const donorsCollection = db.collection('donors');
         const donorRequestCollection = db.collection('donorRequest');
         const donationsCollection = db.collection('donations');
-        
+
 
 
 
@@ -215,8 +238,8 @@ async function run() {
                 const query = { transactionId: transactionId }
                 const paymentexist = await donationsCollection.findOne(query)
 
-                if(paymentexist){
-                    return res.send({message:"Already Exist",transactionId})
+                if (paymentexist) {
+                    return res.send({ message: "Already Exist", transactionId })
                 }
 
                 const donation = {
@@ -258,9 +281,19 @@ async function run() {
 
 
 
-        app.get("/donations", async (req, res) => {
+        app.get("/donations", verifyFBToken, async (req, res) => {
+
+            console.log("Headers", req.headers)
+            const email = req.query.email;
+            const query = {}
+
+            if(email){
+                query.email = email;
+                if(email!==req.decoded_email)
+                    return res.status(403).send({message:"Forbidden Access"})
+            }
             const donations = await donationsCollection
-                .find()
+                .find(query)
                 .sort({ created_at: -1 })
                 .toArray();
 
