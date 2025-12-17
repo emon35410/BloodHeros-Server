@@ -109,10 +109,23 @@ async function run() {
 
 
         app.get('/donors', async (req, res) => {
-            const cursor = donorsCollection.find();
-            const result = await cursor.toArray();
-            res.send(result)
-        })
+            try {
+                const { blood_group, district, upazila } = req.query;
+                const filter = {};
+                if (blood_group) filter.blood_group = blood_group;
+                if (district) filter.district = district;
+                if (upazila) filter.upazila = upazila;
+
+                console.log("Donor search filter:", filter); 
+                const donors = await donorsCollection.find(filter).toArray();
+                res.send(donors);
+            } catch (error) {
+                console.error("Get donors error:", error);
+                res.status(500).send({ message: "Failed to fetch donors" });
+            }
+        });
+
+
 
 
 
