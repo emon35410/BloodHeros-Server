@@ -116,7 +116,7 @@ async function run() {
                 if (district) filter.district = district;
                 if (upazila) filter.upazila = upazila;
 
-                console.log("Donor search filter:", filter); 
+                console.log("Donor search filter:", filter);
                 const donors = await donorsCollection.find(filter).toArray();
                 res.send(donors);
             } catch (error) {
@@ -126,7 +126,27 @@ async function run() {
         });
 
 
+        // update donor profile
+        app.patch('/donors/:email', async (req, res) => {
+            const email = req.params.email;
+            const updateData = req.body; 
 
+            try {
+                const result = await donorsCollection.updateOne(
+                    { email: email },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ message: 'Donor not found' });
+                }
+
+                res.json({ message: 'Donor profile updated successfully' });
+            } catch (err) {
+                console.error(err);
+                res.status(500).json({ message: 'Failed to update donor profile' });
+            }
+        });
 
 
         // Donor Request API
