@@ -71,6 +71,11 @@ async function run() {
         const donorRequestCollection = db.collection('donorRequest');
         const donationsCollection = db.collection('donations');
 
+        await donationsCollection.createIndex(
+            { transactionId: 1 },
+            { unique: true }
+        );
+
 
 
 
@@ -139,7 +144,6 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch requests' });
             }
         });
-
 
         // POST - Create new donor request
         app.post('/donorRequest', async (req, res) => {
@@ -255,15 +259,29 @@ async function run() {
         app.patch("/payment-success", async (req, res) => {
             const sessionID = req.query.session_id;
 
-            try {
+            if (!sessionID) {
+                return res.status(400).send({
+                    success: false,
+                    message: "Session ID is required"
+                });
+            }
 
+            try {
                 const session = await stripe.checkout.sessions.retrieve(sessionID);
                 const transactionId = session.payment_intent;
-                const query = { transactionId: transactionId }
-                const paymentexist = await donationsCollection.findOne(query)
 
-                if (paymentexist) {
-                    return res.send({ message: "Already Exist", transactionId })
+                // Check if payment already exists
+                const paymentExist = await donationsCollection.findOne({
+                    transactionId: transactionId
+                });
+
+                if (paymentExist) {
+                    return res.send({
+                        success: true,
+                        message: "Already Exist",
+                        transactionId,
+                        donation: paymentExist
+                    });
                 }
 
                 const donation = {
@@ -286,11 +304,17 @@ async function run() {
                 });
 
             } catch (error) {
-
+                // Handle duplicate key error from MongoDB unique index
                 if (error.code === 11000) {
+                    // Fetch and return the existing donation
+                    const existing = await donationsCollection.findOne({
+                        transactionId: error.keyValue?.transactionId
+                    });
+
                     return res.send({
                         success: true,
                         message: "Duplicate prevented by DB",
+                        donation: existing
                     });
                 }
 
