@@ -77,6 +77,23 @@ async function run() {
         );
 
 
+        // middleware with database access
+        const veryfyAdmin = async (req, res, next) => {
+            const email = req.decoded_email;
+            if (!email) {
+                return res.status(401).send({ message: "Unauthorized Access" });
+            }
+
+            const query = { email };
+            const user = await donorsCollection.findOne(query); // renamed to user for clarity
+
+            if (!user || user.role !== 'admin') {
+                return res.status(403).send({ message: "Forbidden Access" });
+            }
+            next();
+        };
+
+
 
 
         // Donors API
@@ -125,11 +142,16 @@ async function run() {
             }
         });
 
-
+        // Get donor role 
+        app.get('/donors/role/:email', async (req, res) => {
+            const email = req.params.email;
+            const donor = await donorsCollection.findOne({ email });
+            res.send({ role: donor?.role || 'donor' });
+        });
         // update donor profile
         app.patch('/donors/:email', async (req, res) => {
             const email = req.params.email;
-            const updateData = req.body; 
+            const updateData = req.body;
 
             try {
                 const result = await donorsCollection.updateOne(
@@ -148,35 +170,83 @@ async function run() {
             }
         });
 
+        // Update donor role
+        app.patch('/donors/role/:email', verifyFBToken, veryfyAdmin, async (req, res) => {
+            const email = req.params.email;
+            const { role } = req.body;
+
+            if (!role) {
+                return res.status(400).send({ message: 'Role is required' });
+            }
+
+            try {
+                const result = await donorsCollection.updateOne(
+                    { email },
+                    { $set: { role } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: 'Donor not found' });
+                }
+
+                res.send({ success: true, message: `Role updated to ${role}` });
+            } catch (err) {
+                console.error('Update role error:', err);
+                res.status(500).send({ message: 'Failed to update role' });
+            }
+        });
+
+        //  Update donor status (active / blocked)
+        app.patch('/donors/status/:email', async (req, res) => {
+            const email = req.params.email;
+            const { status } = req.body;
+
+            if (!status) {
+                return res.status(400).send({ message: 'Status is required' });
+            }
+
+            try {
+                const result = await donorsCollection.updateOne(
+                    { email },
+                    { $set: { status } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: 'Donor not found' });
+                }
+
+                res.send({ success: true, message: `Status updated to ${status}` });
+            } catch (err) {
+                console.error('Update status error:', err);
+                res.status(500).send({ message: 'Failed to update status' });
+            }
+        });
+
+
 
         // Donor Request API
-
-        app.get('/donorRequest', async (req, res) => {
+        app.get('/donorRequest', verifyFBToken, async (req, res) => {
             try {
-                const query = {};
-                const { email, limit } = req.query;
+                const email = req.query.email?.toLowerCase().trim(); // optional query
+                let query = {};
 
                 if (email) {
                     query.requesterEmail = email;
                 }
-
-                let cursor = donorRequestCollection
+                const requests = await donorRequestCollection
                     .find(query)
-                    .sort({ _id: -1 });
+                    .sort({ _id: -1 })
+                    .toArray();
 
-                // 🔥 apply limit ONLY if provided
-                if (limit) {
-                    cursor = cursor.limit(parseInt(limit));
-                }
-
-                const result = await cursor.toArray();
-                res.send(result);
+                res.send(requests);
 
             } catch (error) {
-                console.error('Get requests error:', error);
+                console.error('Get donor requests error:', error);
                 res.status(500).send({ message: 'Failed to fetch requests' });
             }
         });
+
+
 
         // POST - Create new donor request
         app.post('/donorRequest', async (req, res) => {
@@ -190,55 +260,51 @@ async function run() {
             }
         })
 
-        // PATCH - Update donor request status
-        app.patch('/donorRequest/:id', async (req, res) => {
-            try {
-                const { id } = req.params;
-                const updateData = req.body;
+        app.patch(
+            '/donorRequest/:id',
+            verifyFBToken,
+            async (req, res) => {
+                const email = req.decoded_email;
+                const user = await donorsCollection.findOne({ email });
 
-                const result = await donorRequestCollection.updateOne(
-                    { _id: new ObjectId(id) },
-                    { $set: updateData }
-                );
-
-                if (result.matchedCount === 0) {
-                    return res.status(404).send({ message: 'Request not found' });
+                if (!user) {
+                    return res.status(403).send({ message: "User not found" });
                 }
 
-                res.send({
-                    success: true,
-                    message: 'Request updated successfully',
-                    modifiedCount: result.modifiedCount
-                });
-            } catch (error) {
-                console.error('Update request error:', error);
-                res.status(500).send({ message: 'Failed to update request' });
-            }
-        })
-
-        // DELETE - Delete donor request (hard delete)
-        app.delete('/donorRequest/:id', async (req, res) => {
-            try {
-                const { id } = req.params;
-
-                const result = await donorRequestCollection.deleteOne({
-                    _id: new ObjectId(id)
-                });
-
-                if (result.deletedCount === 0) {
-                    return res.status(404).send({ message: 'Request not found' });
+                // Volunteer → only status update
+                if (user.role === 'volunteer') {
+                    await donorRequestCollection.updateOne(
+                        { _id: new ObjectId(req.params.id) },
+                        { $set: { status: req.body.status } }
+                    );
+                    return res.send({ success: true });
                 }
 
-                res.send({
-                    success: true,
-                    message: 'Request deleted successfully',
-                    deletedCount: result.deletedCount
-                });
-            } catch (error) {
-                console.error('Delete request error:', error);
-                res.status(500).send({ message: 'Failed to delete request' });
+                // Admin → full update
+                if (user.role === 'admin') {
+                    await donorRequestCollection.updateOne(
+                        { _id: new ObjectId(req.params.id) },
+                        { $set: req.body }
+                    );
+                    return res.send({ success: true });
+                }
+
+                return res.status(403).send({ message: "Forbidden" });
             }
-        })
+        );
+
+        app.delete(
+            '/donorRequest/:id',
+            verifyFBToken,
+            veryfyAdmin,
+            async (req, res) => {
+                await donorRequestCollection.deleteOne({
+                    _id: new ObjectId(req.params.id)
+                });
+                res.send({ success: true });
+            }
+        );
+
 
         // GET - Get single donor request by ID
         app.get('/donorRequest/:id', async (req, res) => {
@@ -261,7 +327,7 @@ async function run() {
 
         // Donation Payment API's
 
-        // 1. Create checkout session
+        // Create checkout session
         app.post("/create-checkout-session", async (req, res) => {
             const { name, email, amount } = req.body;
             const session = await stripe.checkout.sessions.create({
