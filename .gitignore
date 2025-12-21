@@ -1,3 +1,4 @@
 node_modules
 .env
 blood-heros-firebase-adminsdk.json
+.vercel
