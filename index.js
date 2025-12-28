@@ -75,6 +75,7 @@ async function run() {
         const donorsCollection = db.collection('donors');
         const donorRequestCollection = db.collection('donorRequest');
         const donationsCollection = db.collection('donations');
+        const blooddonorRequestCollection = db.collection('blooddonorRequest');
 
         await donationsCollection.createIndex(
             { transactionId: 1 },
@@ -254,7 +255,7 @@ async function run() {
 
 
         // POST - Create new donor request
-        app.post('/donorRequest', async (req, res) => {
+        app.post('/donorRequest', verifyFBToken, async (req, res) => {
             try {
                 const newRequest = req.body;
                 const result = await donorRequestCollection.insertOne(newRequest);
@@ -329,6 +330,116 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch request' });
             }
         })
+
+
+        // bloood donor request API
+        app.post('/blood-donate', async (req, res) => {
+            try {
+                const donorData = req.body;
+
+                // basic validation
+                if (!donorData.email || !donorData.fullName || !donorData.bloodGroup) {
+                    return res.status(400).send({ message: 'Required fields missing' });
+                }
+
+                donorData.status = 'pending'; // pending | approved | rejected
+                donorData.created_at = new Date();
+
+                const result = await blooddonorRequestCollection.insertOne(donorData);
+
+                res.send({
+                    success: true,
+                    message: 'Blood donation request submitted',
+                    insertedId: result.insertedId
+                });
+            } catch (error) {
+                console.error('Blood donate error:', error);
+                res.status(500).send({ message: 'Failed to submit donation request' });
+            }
+        });
+
+        app.get('/blood-donate', async (req, res) => {
+            try {
+                const result = await blooddonorRequestCollection.find().toArray();
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to fetch requests' });
+            }
+        });
+        // Add this alongside your app.patch
+        app.get('/blood-donate/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const result = await blooddonorRequestCollection.findOne(query);
+
+                if (!result) return res.status(404).send({ message: "Not Found" });
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Error fetching data" });
+            }
+        });
+
+
+        app.patch('/blood-donate/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const updateData = req.body;
+
+                // Validate ObjectId
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ message: 'Invalid ID format' });
+                }
+
+                const result = await blooddonorRequestCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: 'Donor request not found' });
+                }
+
+                res.send({
+                    success: true,
+                    message: 'Donor request updated successfully',
+                    modifiedCount: result.modifiedCount
+                });
+            } catch (error) {
+                console.error('Blood donate update error:', error);
+                res.status(500).send({ message: 'Failed to update donor request' });
+            }
+        });
+
+        app.delete('/blood-donate/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                // Validate ObjectId format before attempting deletion
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ message: 'Invalid ID format' });
+                }
+
+                const query = { _id: new ObjectId(id) };
+                const result = await blooddonorRequestCollection.deleteOne(query);
+
+                if (result.deletedCount === 1) {
+                    res.send({
+                        success: true,
+                        message: 'Blood donation request deleted successfully',
+                        deletedCount: result.deletedCount
+                    });
+                } else {
+                    res.status(404).send({
+                        success: false,
+                        message: 'No request found with this ID'
+                    });
+                }
+            } catch (error) {
+                console.error('Delete error:', error);
+                res.status(500).send({ message: 'Failed to delete donation request' });
+            }
+        });
 
         // Donation Payment API's
 
