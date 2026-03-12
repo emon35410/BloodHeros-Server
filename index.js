@@ -1,6 +1,7 @@
 const express = require('express')
 const cors = require('cors')
 const app = express()
+const dns = require('dns');
 const port = process.env.PORT || 3000
 require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
@@ -10,7 +11,7 @@ const admin = require("firebase-admin");
 // const serviceAccount = require("./blood-heros-firebase-adminsdk.json");
 
 // const serviceAccount = require("./firebase-admin-key.json");
-
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
 const serviceAccount = JSON.parse(decoded);
 
